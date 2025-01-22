@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const maxGoroutines = 3 // Максимальное количество одновременно выполняемых горутин
+const maxGoroutines = 20 // Максимальное количество одновременно выполняемых горутин
 
 var mu sync.Mutex       // Создаем mutex для защиты переменной totalProcessed
 var totalProcessed uint // Переменная для хранения общего количества обработанных записей
