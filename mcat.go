@@ -5,8 +5,10 @@ import (
 	"github.com/fatih/color"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +18,23 @@ const maxGoroutines = 3 // Максимальное количество одн�
 
 var mu sync.Mutex       // Создаем mutex для защиты переменной totalProcessed
 var totalProcessed uint // Переменная для хранения общего количества обработанных записей
+
+func formatNumberWithSpaces(num int) string {
+	// Конвертируем число в строку
+	strNum := strconv.Itoa(num)
+	n := len(strNum)
+	var result strings.Builder
+
+	for i, digit := range strNum {
+		// Добавляем пробелы в нужные места
+		if i > 0 && (n-i)%3 == 0 {
+			result.WriteRune(' ')
+		}
+		result.WriteRune(digit)
+	}
+
+	return result.String()
+}
 
 // Функция для очистки имени файла от специальных символов
 func sanitizeName(record string) string {
@@ -36,16 +55,16 @@ func processRecords(db *gorm.DB, record string) {
 		return
 	}
 
-	const batchSize = 1000
+	const batchSize = 500
 	var params []FgMcatParams
 
 	// Извлекаем блоки записей
-	var lastProcessedParamName string
+	var lastProcessedId uint32
 	for {
 		var batch []FgMcatParams
 		if err := db.Model(&FgMcatParams{}).
-			Where("ParamName = ? AND ParamName > ?", record, lastProcessedParamName).
-			Order("ParamName ASC").
+			Where("ParamName = ? AND Id > ?", record, lastProcessedId).
+			Order("Id").
 			Limit(batchSize).
 			Find(&batch).Error; err != nil {
 			log.Print(red("не удалось извлечь записи по ParamName:"), err)
@@ -57,25 +76,49 @@ func processRecords(db *gorm.DB, record string) {
 		}
 
 		params = append(params, batch...)
-		lastProcessedParamName = batch[len(batch)-1].ParamName // обновляем на последний элемент
+		lastProcessedId = batch[len(batch)-1].ID // обновляем на последний элемент
 	}
 
-	paramValues := make([]FgMcatParamsValues, len(params))
-	for i, param := range params {
+	tx := db.Begin() // Начинаем транзакцию
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback() // Откат транзакции при панике
+		}
+	}()
+
+	for _, param := range params {
 		cleanedParam := sanitizeName(param.ParamValue)
-		paramValues[i] = FgMcatParamsValues{
+		paramValue := FgMcatParamsValues{
 			ParamID: fgMcatParamsList.ID,
 			Value:   cleanedParam,
 		}
+
+		if err := tx.Create(&paramValue).Error; err != nil {
+			log.Print(red("не удалось выполнить вставку в базу данных:"), err)
+			tx.Rollback() // Откат при ошибке вставки
+			return
+		}
+		valueId := paramValue.ID
+		var fgMcatParamsListValues = FgMcatParamsListValues{
+			FgMcatParamsItemHash: param.ItemHash,
+			FgMcatParamsValuesID: valueId,
+		}
+		if err := tx.Create(&fgMcatParamsListValues).Error; err != nil {
+			log.Print(red("не удалось выполнить вставку в базу данных:"), err)
+			tx.Rollback() // Откат при ошибке вставки
+			return
+		}
 	}
 
-	if err := db.Create(&paramValues).Error; err != nil {
-		log.Print(red("не удалось выполнить вставку в базу данных:"), err)
-		return
+	if err := tx.Commit().Error; err != nil {
+		log.Print(red("не удалось подтвердить транзакцию:"), err)
 	}
 
 	mu.Lock()
 	totalProcessed += uint(len(params)) // Обновляем общее количество обработанных записей
+	// Форматируем число с пробелами
+	formatted := formatNumberWithSpaces(int(totalProcessed))
+	fmt.Println("Обработано записей:", formatted)
 	mu.Unlock()
 }
 
@@ -100,6 +143,8 @@ func main() {
 	sqlDB.SetMaxOpenConns(50)                 // Максимум 50 открытых соединений
 	sqlDB.SetMaxIdleConns(20)                 // Максимум 20 простаивающих соединений
 	sqlDB.SetConnMaxLifetime(time.Minute * 5) // Время жизни соединения
+
+	db.Logger = logger.Default.LogMode(logger.Error)
 
 	fmt.Println(blue("Начало обработки..."))
 
@@ -130,7 +175,8 @@ func main() {
 	elapsedTime := time.Since(startTime) // Вычисляем время выполнения
 	fmt.Printf(green("Время выполнения (форматированный вывод): %.2f секунд\n"), elapsedTime.Seconds())
 	fmt.Println(green("Время выполнения (стандарный вывод):", elapsedTime))
-	fmt.Println(green(fmt.Sprintf("Обработано записей: %d", totalProcessed)))
+	formatted := formatNumberWithSpaces(int(totalProcessed))
+	fmt.Println("Обработано записей:", formatted)
 	fmt.Println(yellow("Обработка завершена"))
 	fmt.Scanln()
 }

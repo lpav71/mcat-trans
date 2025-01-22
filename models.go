@@ -25,8 +25,12 @@ func (FgMcatParamsValues) TableName() string {
 
 // FgMcatParamsListValues - промежуточная таблица для связи многие ко многим
 type FgMcatParamsListValues struct {
-	FgMcatParamsListID   uint64 `gorm:"not null"`
-	FgMcatParamsValuesID uint64 `gorm:"not null"`
+	FgMcatParamsItemHash string `gorm:"column:ItemHash;not null"`
+	FgMcatParamsValuesID uint64 `gorm:"column:ValueId;not null"`
+}
+
+func (FgMcatParamsListValues) TableName() string {
+	return "fg_mcat_params_list_values"
 }
 
 // FgMcatItems - структура таблицы fg_mcat_items
@@ -49,7 +53,7 @@ func (FgMcatItems) TableName() string {
 }
 
 type FgMcatParams struct {
-	ID         uint32 `gorm:"primaryKey;autoIncrement;notNull" json:"id"`
+	ID         uint32 `gorm:"column:Id;primaryKey;autoIncrement;notNull" json:"id"`
 	ItemHash   string `gorm:"type:varchar(255);not null;default:'0';collate:utf8mb3_bin" json:"item_hash"`
 	ParamName  string `gorm:"column:ParamName;type:varchar(50);not null;default:'';collate:utf8mb3_bin" json:"param_name"`
 	ParamValue string `gorm:"column:ParamValue;type:varchar(50);not null;default:'';collate:utf8mb3_bin" json:"param_value"`
