@@ -6,7 +6,6 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"log"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -28,61 +27,56 @@ func sanitizeName(record string) string {
 func processRecords(db *gorm.DB, record string) {
 	red := color.New(color.FgRed).SprintFunc()
 
-	cleanedRecord := sanitizeName(record)
-	file, err := os.Create("sql/" + cleanedRecord + ".sql")
-	if err != nil {
-		log.Print(red("не удалось создать файл:"), err)
+	recordSanitized := sanitizeName(record)
+	var fgMcatParamsList = FgMcatParamsList{
+		Name: recordSanitized,
+	}
+	if err := db.Create(&fgMcatParamsList).Error; err != nil {
+		log.Print(red("Не удалось создать запись:"), err)
 		return
 	}
-	fmt.Println("Создан файл:", cleanedRecord+".sql")
-	defer file.Close()
-
-	var fgMcatParamsList = FgMcatParamsList{
-		Name: record,
-	}
-	db.Create(&fgMcatParamsList)
 
 	const batchSize = 1000
 	var params []FgMcatParams
 
+	// Извлекаем блоки записей
+	var lastProcessedParamName string
 	for {
-		// Извлекаем блоки записей
-		var lastProcessedParamName string
-		for {
-			var batch []FgMcatParams
-			if err := db.Model(&FgMcatParams{}).
-				Where("ParamName = ? AND ParamName > ?", cleanedRecord, lastProcessedParamName).
-				Order("ParamName ASC").
-				Limit(batchSize).
-				Find(&batch).Error; err != nil {
-				log.Print(red("не удалось извлечь записи по ParamName:"), err)
-				return
-			}
-
-			if len(batch) == 0 {
-				break // выход из цикла, если больше нет записей
-			}
-
-			params = append(params, batch...)
-			lastProcessedParamName = batch[len(batch)-1].ParamName // обновляем на последний элемент
+		var batch []FgMcatParams
+		if err := db.Model(&FgMcatParams{}).
+			Where("ParamName = ? AND ParamName > ?", record, lastProcessedParamName).
+			Order("ParamName ASC").
+			Limit(batchSize).
+			Find(&batch).Error; err != nil {
+			log.Print(red("не удалось извлечь записи по ParamName:"), err)
+			return
 		}
 
-		for _, param := range params {
-			cleanedParam := sanitizeName(param.ParamValue)
-			sqlInsert := fmt.Sprintf("INSERT INTO fg_mcat_params_values (Value, ParamID) VALUES ('%s', %d);\n", cleanedParam, fgMcatParamsList.ID)
-			if _, err := file.WriteString(sqlInsert); err != nil {
-				log.Print(red("не удалось записать в файл:"), err)
-				return
-			}
+		if len(batch) == 0 {
+			break // выход из цикла, если больше нет записей
 		}
 
-		mu.Lock()
-		totalProcessed += uint(len(params)) // Обновляем общее количество обработанных записей
-		mu.Unlock()
-		break
+		params = append(params, batch...)
+		lastProcessedParamName = batch[len(batch)-1].ParamName // обновляем на последний элемент
 	}
 
-	fmt.Println("Завершён файл:", cleanedRecord+".sql")
+	paramValues := make([]FgMcatParamsValues, len(params))
+	for i, param := range params {
+		cleanedParam := sanitizeName(param.ParamValue)
+		paramValues[i] = FgMcatParamsValues{
+			ParamID: fgMcatParamsList.ID,
+			Value:   cleanedParam,
+		}
+	}
+
+	if err := db.Create(&paramValues).Error; err != nil {
+		log.Print(red("не удалось выполнить вставку в базу данных:"), err)
+		return
+	}
+
+	mu.Lock()
+	totalProcessed += uint(len(params)) // Обновляем общее количество обработанных записей
+	mu.Unlock()
 }
 
 func main() {
@@ -135,7 +129,7 @@ func main() {
 	wg.Wait()                            // Ждем завершения всех горутин
 	elapsedTime := time.Since(startTime) // Вычисляем время выполнения
 	fmt.Printf(green("Время выполнения (форматированный вывод): %.2f секунд\n"), elapsedTime.Seconds())
-	fmt.Println(green("Время выполнения:", elapsedTime))
+	fmt.Println(green("Время выполнения (стандарный вывод):", elapsedTime))
 	fmt.Println(green(fmt.Sprintf("Обработано записей: %d", totalProcessed)))
 	fmt.Println(yellow("Обработка завершена"))
 	fmt.Scanln()

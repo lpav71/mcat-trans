@@ -13,10 +13,10 @@ func (FgMcatParamsList) TableName() string {
 
 // FgMcatParamsValues - структура таблицы fg_mcat_params_values
 type FgMcatParamsValues struct {
-	ID      uint64              `gorm:"primaryKey;autoIncrement;not null" json:"id"`
-	ParamID uint64              `gorm:"type:bigint;not null;default:0" json:"param_id"`
-	Value   string              `gorm:"type:varchar(255);not null;default:'0';collate:utf8mb4_0900_ai_ci" json:"value"`
-	Params  []*FgMcatParamsList `gorm:"many2many:fg_mcat_params_list_values" json:"params"`
+	ID      uint64              `gorm:"primaryKey;autoIncrement;not null"`
+	ParamID uint64              `gorm:"column:ParamID;type:bigint;not null;default:0"`
+	Value   string              `gorm:"column:Value;type:varchar(255);not null;default:'0';collate:utf8mb4_0900_ai_ci"`
+	Params  []*FgMcatParamsList `gorm:"many2many:fg_mcat_params_list_values"`
 }
 
 func (FgMcatParamsValues) TableName() string {
